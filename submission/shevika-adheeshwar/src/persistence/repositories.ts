@@ -85,6 +85,10 @@ export class SubscriptionRepository {
     this.db.run('UPDATE subscriptions SET status = ?, updated_at = ? WHERE id = ?', [status, now, id]);
   }
 
+  findAll(): SubscriptionRow[] {
+    return this.db.all<SubscriptionRow>('SELECT * FROM subscriptions ORDER BY created_at, id');
+  }
+
   countAll(): number {
     return this.db.count('SELECT COUNT(*) FROM subscriptions');
   }

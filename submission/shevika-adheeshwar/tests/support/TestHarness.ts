@@ -78,6 +78,17 @@ export class TestHarness {
     );
   }
 
+  /**
+   * Writes straight to the database, bypassing the service.
+   *
+   * Only for proving that a verification helper actually detects a broken
+   * invariant. Production code paths must never reach for this, which is why it
+   * is named to be uncomfortable to use by accident.
+   */
+  corruptForTesting(sql: string): void {
+    this.database.run(sql);
+  }
+
   stop(): void {
     this.database.close();
   }

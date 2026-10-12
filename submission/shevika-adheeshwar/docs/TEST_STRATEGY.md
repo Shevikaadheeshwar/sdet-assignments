@@ -317,6 +317,9 @@ implementation and records which tests notice:
 | Reuse one idempotency key for every attempt | 11 |
 | Fall back to a default plan instead of rejecting | 2 |
 | Drop the persisted decline reason | 2 |
+| Stop writing audit rows on transition | 7 |
+| Let a retry open a new invoice instead of settling the old one | 5 |
+| Forget to reset `failed_attempts` after a success | 1 |
 
 The two zero rows are the useful ones. They are reported rather than quietly
 dropped, because a mutation that survives is a real gap in the suite, not a
