@@ -85,6 +85,10 @@ export class SubscriptionRepository {
     this.db.run('UPDATE subscriptions SET status = ?, updated_at = ? WHERE id = ?', [status, now, id]);
   }
 
+  countAll(): number {
+    return this.db.count('SELECT COUNT(*) FROM subscriptions');
+  }
+
   markCanceled(id: string, now: string): void {
     this.db.run('UPDATE subscriptions SET canceled_at = ?, updated_at = ? WHERE id = ?', [now, now, id]);
   }

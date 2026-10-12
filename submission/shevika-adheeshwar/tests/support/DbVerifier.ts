@@ -40,6 +40,11 @@ export class DbVerifier {
     return this.subscriptions.findById(id);
   }
 
+  /** Used by rejection tests to prove nothing was written at all. */
+  subscriptionCount(): number {
+    return this.subscriptions.countAll();
+  }
+
   invoicesFor(subscriptionId: string): InvoiceRow[] {
     return this.invoices.findBySubscription(subscriptionId);
   }

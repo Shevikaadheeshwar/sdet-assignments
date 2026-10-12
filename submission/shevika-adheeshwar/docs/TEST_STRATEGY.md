@@ -313,6 +313,10 @@ implementation and records which tests notice:
 | Ignore the stale-invoice check | 5 |
 | Drop the terminal-subscription check | 2 |
 | Insert the event row *after* applying effects | **0 — see §11** |
+| Treat a provider timeout as a success | 12 |
+| Reuse one idempotency key for every attempt | 11 |
+| Fall back to a default plan instead of rejecting | 2 |
+| Drop the persisted decline reason | 2 |
 
 The two zero rows are the useful ones. They are reported rather than quietly
 dropped, because a mutation that survives is a real gap in the suite, not a
