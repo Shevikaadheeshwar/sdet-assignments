@@ -83,6 +83,10 @@ export class SubscriptionRepository {
     this.db.run('UPDATE subscriptions SET status = ?, updated_at = ? WHERE id = ?', [status, now, id]);
   }
 
+  markCanceled(id: string, now: string): void {
+    this.db.run('UPDATE subscriptions SET canceled_at = ?, updated_at = ? WHERE id = ?', [now, now, id]);
+  }
+
   setFailedAttempts(id: string, attempts: number, now: string): void {
     this.db.run('UPDATE subscriptions SET failed_attempts = ?, updated_at = ? WHERE id = ?', [attempts, now, id]);
   }
@@ -122,6 +126,28 @@ export class InvoiceRepository {
 
   updateStatus(id: string, status: InvoiceStatus, now: string): void {
     this.db.run('UPDATE invoices SET status = ?, updated_at = ? WHERE id = ?', [status, now, id]);
+  }
+
+  /**
+   * The invoice a retry should settle: the most recent one still owed. Returning
+   * it rather than opening a new invoice is what keeps a `past_due` retry from
+   * silently creating a second charge for the same billing period.
+   */
+  findLatestUnpaid(subscriptionId: string): InvoiceRow | undefined {
+    return this.db.get<InvoiceRow>(
+      `SELECT * FROM invoices
+        WHERE subscription_id = ? AND status IN ('open', 'failed')
+        ORDER BY period_sequence DESC LIMIT 1`,
+      [subscriptionId],
+    );
+  }
+
+  /** Cancellation stops future billing, so anything still open is voided. */
+  voidOpen(subscriptionId: string, now: string): void {
+    this.db.run(
+      "UPDATE invoices SET status = 'void', updated_at = ? WHERE subscription_id = ? AND status = 'open'",
+      [now, subscriptionId],
+    );
   }
 
   nextPeriodSequence(subscriptionId: string): number {

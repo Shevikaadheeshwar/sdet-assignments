@@ -1,15 +1,16 @@
 import { DomainError } from '../domain/errors';
 import type { PlanCatalog, PlanConfig } from '../domain/PlanCatalog';
-import type { ChargeOutcome, PaymentProvider } from '../payments/PaymentProvider';
 import type {
   AuditLogRepository,
   CustomerRepository,
   InvoiceRepository,
-  PaymentRepository,
   SubscriptionRepository,
 } from '../persistence/repositories';
-import type { InvoiceRow, SubscriptionRow } from '../persistence/rows';
+import type { SubscriptionRow } from '../persistence/rows';
 import type { Clock } from '../support/clock';
+
+import type { BillingService } from './BillingService';
+import type { SubscriptionLifecycle } from './SubscriptionLifecycle';
 
 export interface CreateSubscriptionCommand {
   readonly customer_id?: unknown;
@@ -22,20 +23,18 @@ export interface SubscriptionServiceDependencies {
   readonly customers: CustomerRepository;
   readonly subscriptions: SubscriptionRepository;
   readonly invoices: InvoiceRepository;
-  readonly payments: PaymentRepository;
   readonly audit: AuditLogRepository;
-  readonly paymentProvider: PaymentProvider;
+  readonly lifecycle: SubscriptionLifecycle;
+  readonly billing: BillingService;
   readonly clock: Clock;
 }
 
 /**
- * Subscription creation and retrieval.
+ * The subscription use cases: create, read, cancel, and run a billing cycle.
  *
- * Every subscription is born `trialing`, which is the lifecycle's documented
- * entry state. A plan with no trial simply has its trial end immediately, so
- * creating one takes the same `trialing -> active` / `trialing -> past_due` edge
- * as a trial that expires later. One code path, two triggers — rather than a
- * separate "created active" path that would need its own invariants.
+ * This service never writes the status column itself. Every state change goes
+ * through SubscriptionLifecycle, which is the only code that can move a
+ * subscription — so a transition cannot be introduced here by accident.
  */
 export class SubscriptionService {
   constructor(private readonly deps: SubscriptionServiceDependencies) {}
@@ -44,6 +43,9 @@ export class SubscriptionService {
     const { plan, customerId, paymentMethodId } = this.validate(command);
     const now = this.deps.clock();
 
+    // Every subscription is born trialing: the lifecycle's entry state. A plan
+    // with no trial simply has its trial end immediately, so it leaves on the
+    // same edge a 14-day trial would.
     const subscription = this.deps.subscriptions.insert(
       {
         customerId,
@@ -72,12 +74,50 @@ export class SubscriptionService {
       return subscription;
     }
 
-    await this.chargeFirstPeriod(subscription, plan);
-    return this.requireById(subscription.id);
+    return this.deps.billing.runBillingCycle(subscription, plan);
   }
 
   findById(id: string): SubscriptionRow {
     return this.requireById(id);
+  }
+
+  cancel(id: string): SubscriptionRow {
+    const subscription = this.requireById(id);
+
+    const canceled = this.deps.lifecycle.apply(subscription, 'cancel.requested', {
+      auditTrigger: 'api.cancel',
+    });
+
+    if (!canceled) {
+      throw new DomainError(
+        409,
+        'invalid_transition',
+        `Cannot cancel a subscription in state ${subscription.status}`,
+      );
+    }
+
+    this.deps.invoices.voidOpen(subscription.id, this.deps.clock());
+    return canceled;
+  }
+
+  /**
+   * Runs a billing cycle. Stands in for a scheduler (A2.2) so tests control when
+   * billing happens rather than waiting on a clock.
+   */
+  async bill(id: string): Promise<SubscriptionRow> {
+    const subscription = this.requireById(id);
+
+    // Checked before anything is charged: a terminal subscription must not reach
+    // the payment provider at all, let alone open an invoice.
+    if (this.deps.lifecycle.isTerminal(subscription)) {
+      throw new DomainError(
+        409,
+        'invalid_transition',
+        `Cannot bill a subscription in state ${subscription.status}`,
+      );
+    }
+
+    return this.deps.billing.runBillingCycle(subscription, this.requirePlan(subscription));
   }
 
   private requireById(id: string): SubscriptionRow {
@@ -86,6 +126,18 @@ export class SubscriptionService {
       throw new DomainError(404, 'subscription_not_found', `No subscription with id ${id}`);
     }
     return subscription;
+  }
+
+  private requirePlan(subscription: SubscriptionRow): PlanConfig {
+    const plan = this.deps.plans.get(subscription.plan);
+    if (!plan) {
+      throw new DomainError(
+        500,
+        'unknown_plan_on_subscription',
+        `Subscription ${subscription.id} references unknown plan ${subscription.plan}`,
+      );
+    }
+    return plan;
   }
 
   private validate(command: CreateSubscriptionCommand): {
@@ -122,106 +174,4 @@ export class SubscriptionService {
 
     return { plan, customerId: customer.id, paymentMethodId };
   }
-
-  /**
-   * Opens the first invoice and attempts to settle it. The subscription only
-   * reaches `active` once a succeeded payment row exists, which is invariant I1
-   * enforced by ordering rather than asserted after the fact.
-   */
-  private async chargeFirstPeriod(subscription: SubscriptionRow, plan: PlanConfig): Promise<void> {
-    const now = this.deps.clock();
-    const invoice = this.deps.invoices.insert(
-      {
-        subscriptionId: subscription.id,
-        amountMinor: plan.priceMinor,
-        currency: plan.currency,
-        periodSequence: this.deps.invoices.nextPeriodSequence(subscription.id),
-      },
-      now,
-    );
-
-    const outcome = await this.deps.paymentProvider.charge({
-      customerId: subscription.customer_id,
-      paymentMethodId: subscription.payment_method_id,
-      amountMinor: invoice.amount_minor,
-      currency: invoice.currency,
-      idempotencyKey: idempotencyKeyFor(invoice, 1),
-      reference: invoice.id,
-    });
-
-    this.recordOutcome(subscription, invoice, outcome);
-  }
-
-  private recordOutcome(
-    subscription: SubscriptionRow,
-    invoice: InvoiceRow,
-    outcome: ChargeOutcome,
-  ): void {
-    const now = this.deps.clock();
-    const attempt = this.deps.payments.findByInvoice(invoice.id).length + 1;
-
-    if (outcome.status === 'succeeded') {
-      this.deps.payments.insert(
-        {
-          invoiceId: invoice.id,
-          subscriptionId: subscription.id,
-          providerReference: outcome.providerReference,
-          idempotencyKey: idempotencyKeyFor(invoice, attempt),
-          amountMinor: invoice.amount_minor,
-          currency: invoice.currency,
-          status: 'succeeded',
-          failureReason: null,
-        },
-        now,
-      );
-      this.deps.invoices.updateStatus(invoice.id, 'paid', now);
-      this.transition(subscription, 'active', 'payment.succeeded');
-      return;
-    }
-
-    const failureReason = outcome.status === 'declined' ? outcome.declineCode : 'provider_timeout';
-    this.deps.payments.insert(
-      {
-        invoiceId: invoice.id,
-        subscriptionId: subscription.id,
-        providerReference: null,
-        idempotencyKey: idempotencyKeyFor(invoice, attempt),
-        amountMinor: invoice.amount_minor,
-        currency: invoice.currency,
-        status: outcome.status === 'declined' ? 'failed' : 'timed_out',
-        failureReason,
-      },
-      now,
-    );
-    this.deps.invoices.updateStatus(invoice.id, 'failed', now);
-    this.deps.subscriptions.setFailedAttempts(subscription.id, subscription.failed_attempts + 1, now);
-    this.transition(subscription, 'past_due', 'payment.failed');
-  }
-
-  private transition(
-    subscription: SubscriptionRow,
-    to: 'active' | 'past_due',
-    trigger: string,
-  ): void {
-    const now = this.deps.clock();
-    this.deps.subscriptions.updateStatus(subscription.id, to, now);
-    this.deps.audit.append(
-      {
-        subscriptionId: subscription.id,
-        fromStatus: subscription.status,
-        toStatus: to,
-        trigger,
-        sourceEventId: null,
-      },
-      now,
-    );
-  }
-}
-
-/**
- * Stable per (invoice, attempt), so the provider can safely retry the same call
- * and a replayed billing attempt cannot produce a second charge (invariant I4).
- */
-export function idempotencyKeyFor(invoice: InvoiceRow, attempt: number): string {
-  return `${invoice.id}:attempt:${attempt}`;
 }

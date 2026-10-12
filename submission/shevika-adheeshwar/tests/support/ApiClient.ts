@@ -34,6 +34,20 @@ export class ApiClient {
     return { status: response.status, body: response.body };
   }
 
+  async cancelSubscription(id: string): Promise<ApiResponse<SubscriptionResource & ApiError>> {
+    const response = await request(this.app).post(`/subscriptions/${id}/cancel`).send({});
+    return { status: response.status, body: response.body };
+  }
+
+  /**
+   * Runs a billing cycle for a subscription. This stands in for a scheduler
+   * (strategy A2.2) so tests control when billing happens instead of sleeping.
+   */
+  async billSubscription(id: string): Promise<ApiResponse<SubscriptionResource & ApiError>> {
+    const response = await request(this.app).post(`/subscriptions/${id}/bill`).send({});
+    return { status: response.status, body: response.body };
+  }
+
   /** Posts a body exactly as given, bypassing JSON serialisation. */
   async postRaw(
     path: string,

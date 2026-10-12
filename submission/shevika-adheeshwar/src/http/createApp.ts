@@ -2,6 +2,7 @@ import express, { type ErrorRequestHandler, type Express } from 'express';
 
 import { DomainError } from '../domain/errors';
 import { PlanCatalog } from '../domain/PlanCatalog';
+import { TransitionTable } from '../domain/TransitionTable';
 import type { PaymentProvider } from '../payments/PaymentProvider';
 import type { Database } from '../persistence/Database';
 import {
@@ -11,6 +12,8 @@ import {
   PaymentRepository,
   SubscriptionRepository,
 } from '../persistence/repositories';
+import { BillingService } from '../services/BillingService';
+import { SubscriptionLifecycle } from '../services/SubscriptionLifecycle';
 import { SubscriptionService } from '../services/SubscriptionService';
 import { systemClock, type Clock } from '../support/clock';
 
@@ -35,14 +38,32 @@ export function createApp(dependencies: AppDependencies): Express {
   const { database, paymentProvider } = dependencies;
   const clock = dependencies.clock ?? systemClock;
 
-  const subscriptionService = new SubscriptionService({
-    plans: new PlanCatalog(),
-    customers: new CustomerRepository(database),
-    subscriptions: new SubscriptionRepository(database),
-    invoices: new InvoiceRepository(database),
-    payments: new PaymentRepository(database),
-    audit: new AuditLogRepository(database),
+  const plans = new PlanCatalog();
+  const customers = new CustomerRepository(database);
+  const subscriptions = new SubscriptionRepository(database);
+  const invoices = new InvoiceRepository(database);
+  const payments = new PaymentRepository(database);
+  const audit = new AuditLogRepository(database);
+
+  const lifecycle = new SubscriptionLifecycle(new TransitionTable(), subscriptions, audit, clock);
+
+  const billing = new BillingService({
+    subscriptions,
+    invoices,
+    payments,
+    lifecycle,
     paymentProvider,
+    clock,
+  });
+
+  const subscriptionService = new SubscriptionService({
+    plans,
+    customers,
+    subscriptions,
+    invoices,
+    audit,
+    lifecycle,
+    billing,
     clock,
   });
 
@@ -53,6 +74,21 @@ export function createApp(dependencies: AppDependencies): Express {
     subscriptionService
       .create(req.body ?? {})
       .then((subscription) => res.status(201).json(toSubscriptionResource(subscription)))
+      .catch(next);
+  });
+
+  app.post('/subscriptions/:id/cancel', (req, res, next) => {
+    try {
+      res.status(200).json(toSubscriptionResource(subscriptionService.cancel(req.params.id)));
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post('/subscriptions/:id/bill', (req, res, next) => {
+    subscriptionService
+      .bill(req.params.id)
+      .then((subscription) => res.status(200).json(toSubscriptionResource(subscription)))
       .catch(next);
   });
 

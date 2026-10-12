@@ -116,10 +116,10 @@ too few. This table is therefore filled in against real paths as the code lands.
 
 | Pattern | Location | The concrete problem it solves |
 |---|---|---|
-| **Transition table (state machine)** | `src/domain/TransitionTable.ts` | `canceled` has **no outgoing edges**, so "a stray webhook reactivates a canceled subscription" is structurally unreachable rather than merely untested. Replaces a `status` string mutated from several call sites. |
+| **Transition table (state machine)** | `src/domain/TransitionTable.ts`, applied in `src/services/SubscriptionLifecycle.ts` | `canceled` has **no outgoing edges**, so "a stray webhook reactivates a canceled subscription" is structurally unreachable rather than merely untested. Replaces a `status` string mutated from several call sites. |
 | **Builder** | `tests/support/builders/` | A webhook payload needs an `event_id`, type, subscription, invoice, amount, currency and signature. Repeating that literal across ~30 scenarios would rot; a builder lets each test state only the field it is actually about. |
 | **Provider interface + constructor DI** | `src/payments/PaymentProvider.ts`, injected in `src/http/createApp.ts` | Gives tests a substitution point that records arguments, with no network and no module-level monkey-patching. |
-| **Repository + application Factory** | `src/persistence/*Repository.ts`, `src/http/createApp.ts` | Keeps SQL out of test bodies so persistence assertions read as business invariants. The factory is the single wiring point where the mock provider is injected. |
+| **Repository + application Factory** | `src/persistence/repositories.ts`, `src/http/createApp.ts` | Keeps SQL out of test bodies so persistence assertions read as business invariants. The factory is the single wiring point where the mock provider is injected. |
 
 **Deliberately not claimed:** plan pricing is a configuration lookup in
 `PlanCatalog`, not a Strategy pattern. Calling it one would be the exact
