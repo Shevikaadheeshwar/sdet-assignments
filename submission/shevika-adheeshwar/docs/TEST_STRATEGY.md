@@ -1,11 +1,12 @@
 # Test Strategy — Subscription & Billing Service
 
-**Status: DRAFT (documentation-first, written before implementation).**
-This document is committed ahead of the code on purpose. The assignment asks for a
-test strategy to be defined *before* writing large amounts of automation, so this
-file is the contract the implementation is then held to. Sections marked
-`(to be completed)` are filled in truthfully as the code lands — nothing is claimed
-here that is not demonstrably in the repository.
+**Status: COMPLETE.** Originally committed as a draft *ahead of* any
+implementation — the assignment asks for a test strategy to be defined before
+writing large amounts of automation, so this file was the contract the code was
+then held to. It has been updated as each phase landed, and audited against the
+tree every time: nothing is claimed here that is not demonstrably in the
+repository. Two paths were corrected in Phase 2 when they stopped matching, and
+two gaps found by mutation testing were added to §11 rather than left out.
 
 ---
 
@@ -112,7 +113,7 @@ introducing them would add a dependency that intercepts traffic that does not ex
 ## 6. Design patterns and where they live
 
 The assignment warns that naming a pattern not actually present is worse than using
-too few. This table is therefore filled in against real paths as the code lands.
+too few. Every path below was checked against the tree at the end of each phase.
 
 | Pattern | Location | The concrete problem it solves |
 |---|---|---|
@@ -350,5 +351,17 @@ duplicate and asserts the database refuses it, so that dropping a constraint fai
 
 ## 14. Responsible AI usage
 
-*(to be completed truthfully at submission: what AI generated, what was directed,
-and specifically what was personally run and verified.)*
+An AI coding assistant was used throughout. The full disclosure is in
+`docs/PR_DESCRIPTION.md`; in short:
+
+- **It helped with** the repetitive layers (repositories, row types, builders)
+  and with drafting documentation.
+- **I directed** the strategy, the scenario priorities, and the structural calls
+  — modelling every subscription as born `trialing`, keeping reject-versus-ignore
+  policy with the caller rather than in the transition table, and leaving the
+  concurrency bonus unattempted rather than shipping a test that cannot fail.
+- **I verified** every result reported: no command appears in the PR description
+  that was not actually run. Mutation testing was the check on the generated
+  tests as much as on the implementation — tests that look thorough can assert
+  nothing, and breaking the code deliberately is how that gets found. Two
+  mutations survived and are documented in §11 rather than hidden.
