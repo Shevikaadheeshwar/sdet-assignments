@@ -10,6 +10,7 @@ import type {
   PaymentStatus,
   SubscriptionEventRow,
   SubscriptionRow,
+  WebhookEventRow,
 } from './rows';
 
 /**
@@ -233,5 +234,30 @@ export class AuditLogRepository {
       'SELECT * FROM subscription_events WHERE subscription_id = ? ORDER BY id',
       [subscriptionId],
     );
+  }
+}
+
+/**
+ * The record of every webhook the service has seen.
+ *
+ * `event_id` is the table's PRIMARY KEY, so idempotency is a storage guarantee
+ * rather than an application convention (strategy §9). Writing happens in the
+ * next phase, where the insert and the event's effects share one transaction.
+ */
+export class WebhookEventRepository {
+  constructor(private readonly db: Database) {}
+
+  findById(eventId: string): WebhookEventRow | undefined {
+    return this.db.get<WebhookEventRow>('SELECT * FROM webhook_events WHERE event_id = ?', [eventId]);
+  }
+
+  findAll(): WebhookEventRow[] {
+    return this.db.all<WebhookEventRow>('SELECT * FROM webhook_events ORDER BY received_at, event_id');
+  }
+
+  countFor(subscriptionId: string): number {
+    return this.db.count('SELECT COUNT(*) FROM webhook_events WHERE subscription_id = ?', [
+      subscriptionId,
+    ]);
   }
 }

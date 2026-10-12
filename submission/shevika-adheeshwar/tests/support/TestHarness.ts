@@ -8,6 +8,7 @@ import type { Clock } from '../../src/support/clock';
 import { ApiClient } from './ApiClient';
 import { DbVerifier } from './DbVerifier';
 import { MockPaymentProvider } from './MockPaymentProvider';
+import { WebhookSimulator } from './WebhookSimulator';
 
 export interface SeedCustomer {
   readonly id: string;
@@ -26,9 +27,12 @@ export interface SeedCustomer {
  *
  * Time is injected (A2.2): the clock advances only when a test says so.
  */
+export const TEST_WEBHOOK_SECRET = 'whsec_test_secret';
+
 export class TestHarness {
   readonly api: ApiClient;
   readonly db: DbVerifier;
+  readonly webhooks: WebhookSimulator;
 
   private constructor(
     readonly app: Express,
@@ -39,6 +43,7 @@ export class TestHarness {
   ) {
     this.api = new ApiClient(app);
     this.db = new DbVerifier(database);
+    this.webhooks = new WebhookSimulator(this.api, TEST_WEBHOOK_SECRET);
   }
 
   static async start(): Promise<TestHarness> {
@@ -51,7 +56,12 @@ export class TestHarness {
     const tick = (): string => new Date(Date.UTC(2026, 0, 1) + ticks++ * 1000).toISOString();
     const clock: Clock = () => tick();
 
-    const app = createApp({ database, paymentProvider: provider, clock });
+    const app = createApp({
+      database,
+      paymentProvider: provider,
+      clock,
+      webhookSecret: TEST_WEBHOOK_SECRET,
+    });
 
     return new TestHarness(app, provider, database, new CustomerRepository(database), tick);
   }

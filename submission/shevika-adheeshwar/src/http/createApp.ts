@@ -3,6 +3,7 @@ import express, { type ErrorRequestHandler, type Express } from 'express';
 import { DomainError } from '../domain/errors';
 import { PlanCatalog } from '../domain/PlanCatalog';
 import { TransitionTable } from '../domain/TransitionTable';
+import { parseWebhookEvent } from '../domain/WebhookEvent';
 import type { PaymentProvider } from '../payments/PaymentProvider';
 import type { Database } from '../persistence/Database';
 import {
@@ -18,13 +19,18 @@ import { SubscriptionService } from '../services/SubscriptionService';
 import { systemClock, type Clock } from '../support/clock';
 
 import { toSubscriptionResource } from './resources';
+import { isValidSignature } from './signature';
 
 export interface AppDependencies {
   readonly database: Database;
   /** The seam: tests pass a recording double, production would pass a real client. */
   readonly paymentProvider: PaymentProvider;
   readonly clock?: Clock;
+  /** Shared secret the provider signs webhook bodies with. */
+  readonly webhookSecret?: string;
 }
+
+export const DEFAULT_WEBHOOK_SECRET = 'whsec_local_development_only';
 
 /**
  * The composition root.
@@ -37,6 +43,7 @@ export interface AppDependencies {
 export function createApp(dependencies: AppDependencies): Express {
   const { database, paymentProvider } = dependencies;
   const clock = dependencies.clock ?? systemClock;
+  const webhookSecret = dependencies.webhookSecret ?? DEFAULT_WEBHOOK_SECRET;
 
   const plans = new PlanCatalog();
   const customers = new CustomerRepository(database);
@@ -68,6 +75,53 @@ export function createApp(dependencies: AppDependencies): Express {
   });
 
   const app = express();
+
+  /**
+   * Registered before `express.json()` so the handler receives the raw bytes.
+   * The signature covers the body exactly as sent; letting a JSON parser touch
+   * it first would mean verifying a re-serialised approximation.
+   */
+  app.post(
+    '/webhooks/payment-provider',
+    express.raw({ type: '*/*' }),
+    (req, res, next) => {
+      try {
+        const rawBody = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
+        const signature = req.header('X-Provider-Signature');
+
+        // Order matters (A2.4): an unauthenticated caller must not be able to
+        // probe the JSON parser for behaviour, so this check comes first.
+        if (!signature) {
+          throw new DomainError(401, 'missing_signature', 'X-Provider-Signature header is required');
+        }
+        if (!isValidSignature(rawBody, signature, webhookSecret)) {
+          throw new DomainError(401, 'invalid_signature', 'Signature does not match the request body');
+        }
+
+        let parsed: unknown;
+        try {
+          parsed = JSON.parse(rawBody.toString('utf8'));
+        } catch {
+          throw new DomainError(400, 'malformed_payload', 'Body is not valid JSON');
+        }
+
+        const event = parseWebhookEvent(parsed);
+
+        if (!subscriptions.findById(event.subscriptionId)) {
+          throw new DomainError(
+            404,
+            'subscription_not_found',
+            `No subscription with id ${event.subscriptionId}`,
+          );
+        }
+
+        res.status(200).json({ status: 'received', event_id: event.eventId });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+
   app.use(express.json());
 
   app.post('/subscriptions', (req, res, next) => {

@@ -4,12 +4,14 @@ import {
   InvoiceRepository,
   PaymentRepository,
   SubscriptionRepository,
+  WebhookEventRepository,
 } from '../../src/persistence/repositories';
 import type {
   InvoiceRow,
   PaymentRow,
   SubscriptionEventRow,
   SubscriptionRow,
+  WebhookEventRow,
 } from '../../src/persistence/rows';
 
 /**
@@ -24,12 +26,14 @@ export class DbVerifier {
   private readonly invoices: InvoiceRepository;
   private readonly payments: PaymentRepository;
   private readonly audit: AuditLogRepository;
+  private readonly webhookEventRepository: WebhookEventRepository;
 
   constructor(database: Database) {
     this.subscriptions = new SubscriptionRepository(database);
     this.invoices = new InvoiceRepository(database);
     this.payments = new PaymentRepository(database);
     this.audit = new AuditLogRepository(database);
+    this.webhookEventRepository = new WebhookEventRepository(database);
   }
 
   subscription(id: string): SubscriptionRow | undefined {
@@ -46,6 +50,15 @@ export class DbVerifier {
 
   auditTrailFor(subscriptionId: string): SubscriptionEventRow[] {
     return this.audit.findBySubscription(subscriptionId);
+  }
+
+  /** Every webhook the service recorded, including ones it decided to ignore. */
+  webhookEvents(): WebhookEventRow[] {
+    return this.webhookEventRepository.findAll();
+  }
+
+  webhookEvent(eventId: string): WebhookEventRow | undefined {
+    return this.webhookEventRepository.findById(eventId);
   }
 
   /** The status sequence a subscription actually moved through, for lifecycle assertions. */

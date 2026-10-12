@@ -59,3 +59,15 @@ export interface SubscriptionEventRow {
   source_event_id: string | null;
   created_at: string;
 }
+
+export type WebhookOutcome = 'applied' | 'ignored_stale' | 'ignored_terminal';
+
+export interface WebhookEventRow {
+  event_id: string;
+  type: string;
+  subscription_id: string | null;
+  invoice_id: string | null;
+  payload: string;
+  outcome: WebhookOutcome;
+  received_at: string;
+}

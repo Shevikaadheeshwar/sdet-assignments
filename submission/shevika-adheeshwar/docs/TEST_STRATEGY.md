@@ -226,6 +226,14 @@ Stated up front rather than discovered at review:
   submission's assumption about the provider's shape; drift would not be detected.
 - **Retry count and trial lengths are assumed** (A2.1, A2.3), not specified by the
   assignment. They are centralised in `PlanCatalog` so they are cheap to correct.
+- **The timing-safe signature comparison is not covered by a test.** Found by
+  mutation testing the suite: replacing `timingSafeEqual` with `===` in
+  `src/http/signature.ts` leaves all tests green, because a timing side channel
+  is not observable from a functional assertion. The constant-time comparison is
+  still the right implementation, but the confidence here comes from code review,
+  not from this suite — so it is recorded rather than claimed. Closing it
+  properly needs a statistical timing benchmark, which is out of scope for the
+  time box and flaky on shared CI.
 
 ---
 
@@ -269,6 +277,28 @@ Ordered by risk, so that if the time box binds, the cuts come from the bottom.
 **P3 — bonus**
 
 16. Concurrent delivery of the same `event_id`: exactly one application wins
+
+---
+
+## 12a. How the suite is checked against itself
+
+Passing tests prove nothing on their own; a test that asserts the wrong thing
+passes just as happily. Each phase therefore deliberately breaks the
+implementation and records which tests notice:
+
+| Mutation | Tests failed |
+|---|---|
+| `pro` plan price 4900 -> 4800 | 3 |
+| Activate without ever calling the provider | 3 |
+| Give `canceled` an outgoing edge back to `active` | 6 |
+| Remove the terminal-state guard before billing | 2 |
+| Make retries never exhaust | 1 |
+| Skip webhook signature verification entirely | 3 |
+| Parse the body before verifying the signature | 1 |
+| Replace `timingSafeEqual` with `===` | **0 — see §11** |
+
+The last row is the useful one. It is reported rather than quietly dropped,
+because a mutation that survives is a real gap in the suite, not a detail.
 
 ---
 
