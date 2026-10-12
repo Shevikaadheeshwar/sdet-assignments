@@ -226,6 +226,19 @@ Stated up front rather than discovered at review:
   submission's assumption about the provider's shape; drift would not be detected.
 - **Retry count and trial lengths are assumed** (A2.1, A2.3), not specified by the
   assignment. They are centralised in `PlanCatalog` so they are cheap to correct.
+- **Insert-before-effects ordering in `WebhookProcessor` is not covered by a
+  test.** Found by mutation testing: moving the `webhook_events` insert to
+  *after* the effects leaves all tests green. Sequentially the two orderings are
+  indistinguishable, because the surrounding transaction rolls everything back
+  on a duplicate either way. The ordering only matters when two deliveries race,
+  and this suite cannot create that race: `sql.js` is synchronous and
+  single-process, so `Promise.all` over two deliveries still runs them one after
+  the other. The ordering is kept because it is the correct pattern for a real
+  deployment — insert-first plus a uniqueness constraint is what makes
+  idempotency hold across processes, where a read-then-write check is a race —
+  but the confidence comes from reasoning, not from this suite. Proving it needs
+  a concurrent engine such as Postgres, which is the honest shape of the
+  assignment's concurrency bonus.
 - **The timing-safe signature comparison is not covered by a test.** Found by
   mutation testing the suite: replacing `timingSafeEqual` with `===` in
   `src/http/signature.ts` leaves all tests green, because a timing side channel
@@ -296,9 +309,14 @@ implementation and records which tests notice:
 | Skip webhook signature verification entirely | 3 |
 | Parse the body before verifying the signature | 1 |
 | Replace `timingSafeEqual` with `===` | **0 — see §11** |
+| Drop the `PRIMARY KEY` on `webhook_events.event_id` | 2 |
+| Ignore the stale-invoice check | 5 |
+| Drop the terminal-subscription check | 2 |
+| Insert the event row *after* applying effects | **0 — see §11** |
 
-The last row is the useful one. It is reported rather than quietly dropped,
-because a mutation that survives is a real gap in the suite, not a detail.
+The two zero rows are the useful ones. They are reported rather than quietly
+dropped, because a mutation that survives is a real gap in the suite, not a
+detail.
 
 ---
 

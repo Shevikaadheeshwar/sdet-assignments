@@ -12,10 +12,12 @@ import {
   InvoiceRepository,
   PaymentRepository,
   SubscriptionRepository,
+  WebhookEventRepository,
 } from '../persistence/repositories';
 import { BillingService } from '../services/BillingService';
 import { SubscriptionLifecycle } from '../services/SubscriptionLifecycle';
 import { SubscriptionService } from '../services/SubscriptionService';
+import { WebhookProcessor } from '../services/WebhookProcessor';
 import { systemClock, type Clock } from '../support/clock';
 
 import { toSubscriptionResource } from './resources';
@@ -51,6 +53,7 @@ export function createApp(dependencies: AppDependencies): Express {
   const invoices = new InvoiceRepository(database);
   const payments = new PaymentRepository(database);
   const audit = new AuditLogRepository(database);
+  const webhookEvents = new WebhookEventRepository(database);
 
   const lifecycle = new SubscriptionLifecycle(new TransitionTable(), subscriptions, audit, clock);
 
@@ -60,6 +63,17 @@ export function createApp(dependencies: AppDependencies): Express {
     payments,
     lifecycle,
     paymentProvider,
+    clock,
+  });
+
+  const webhookProcessor = new WebhookProcessor({
+    database,
+    plans,
+    subscriptions,
+    invoices,
+    payments,
+    webhookEvents,
+    lifecycle,
     clock,
   });
 
@@ -106,16 +120,15 @@ export function createApp(dependencies: AppDependencies): Express {
         }
 
         const event = parseWebhookEvent(parsed);
+        const result = webhookProcessor.process(event, rawBody.toString('utf8'));
 
-        if (!subscriptions.findById(event.subscriptionId)) {
-          throw new DomainError(
-            404,
-            'subscription_not_found',
-            `No subscription with id ${event.subscriptionId}`,
-          );
-        }
-
-        res.status(200).json({ status: 'received', event_id: event.eventId });
+        // A replay or a stale event is answered 200. The provider is behaving
+        // correctly by redelivering, and a 4xx would only make it retry.
+        res.status(200).json({
+          status: result.status,
+          event_id: event.eventId,
+          ...(result.status === 'ignored' ? { reason: result.reason } : {}),
+        });
       } catch (error) {
         next(error);
       }

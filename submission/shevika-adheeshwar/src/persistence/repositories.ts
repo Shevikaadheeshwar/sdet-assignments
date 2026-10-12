@@ -11,6 +11,7 @@ import type {
   SubscriptionEventRow,
   SubscriptionRow,
   WebhookEventRow,
+  WebhookOutcome,
 } from './rows';
 
 /**
@@ -246,6 +247,35 @@ export class AuditLogRepository {
  */
 export class WebhookEventRepository {
   constructor(private readonly db: Database) {}
+
+  /**
+   * Inserts the event. Throws a UNIQUE violation on a replay, which is the whole
+   * mechanism: the caller runs this first inside a transaction, so a redelivery
+   * aborts before any side effect can be written.
+   */
+  insert(event: {
+    eventId: string;
+    type: string;
+    subscriptionId: string | null;
+    invoiceId: string | null;
+    payload: string;
+    outcome: WebhookOutcome;
+  }, now: string): void {
+    this.db.run(
+      `INSERT INTO webhook_events
+         (event_id, type, subscription_id, invoice_id, payload, outcome, received_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [
+        event.eventId,
+        event.type,
+        event.subscriptionId,
+        event.invoiceId,
+        event.payload,
+        event.outcome,
+        now,
+      ],
+    );
+  }
 
   findById(eventId: string): WebhookEventRow | undefined {
     return this.db.get<WebhookEventRow>('SELECT * FROM webhook_events WHERE event_id = ?', [eventId]);
